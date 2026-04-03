@@ -35,7 +35,7 @@ def main():
         batch=args.batch_size,
         imgsz=args.img_sz,
         device=device,
-        project="trained_model",
+        project="yolo26s_trained",
         name=args.name_folder,
         save=True,
         exist_ok=True,

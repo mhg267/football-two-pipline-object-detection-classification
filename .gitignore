@@ -11,7 +11,10 @@ __pycache__/
 
 # Training outputs
 runs/
-trained_model/
+yolo26s_model/
+yolo26s_trained/
+efficientnetv2s_model/
+efficientnetv2s_trained/
 
 # Models
 *.pt
