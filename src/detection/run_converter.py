@@ -12,4 +12,4 @@ def main(mode):
     print(f"--- Done! ---")
 
 if __name__ == '__main__':
-    main(mode="train")
+    main(mode="val")

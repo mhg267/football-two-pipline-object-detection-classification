@@ -6,11 +6,11 @@ from torch.utils.data import Dataset
 
 class DetectionDataset(Dataset):
     def __init__(self, path, mode, transform=None):
-        self.path = os.path.join(path, mode)
+        self.path = os.path.join(path, "football_{}".format(mode))
         self.transform = transform
 
-        img_dir = os.path.join(self.path, "images")
-        label_dir = os.path.join(self.path, "labels")
+        img_dir = os.path.join(self.path, "detection_images")
+        label_dir = os.path.join(self.path, "detection_labels")
 
         self.images = sorted([img for img in os.listdir(img_dir) if img.endswith(".jpg")])
 
