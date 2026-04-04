@@ -19,6 +19,8 @@ efficientnetv2s_trained/
 # Models
 *.pt
 *.pth
+*.yaml
+!example_yaml.yaml
 
 
 football_train/

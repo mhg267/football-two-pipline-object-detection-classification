@@ -14,7 +14,7 @@ def get_args():
     parser.add_argument('--optimizer', '-o', type=str, default='AdamW', help='Optimizer of model')
     parser.add_argument('--weight_decay', '-wd', type=float, default=1e-5, help='weight decay')
     parser.add_argument('--name_folder', '-n', type=str, default='yolo26s_lr1e-3_opAdamW', help='name of model folder name with arguments')
-    parser.add_argument('--data_path', '-p', type=str, default='/Computer Vision/Data/Dataset/Football/football_data.yaml', help='data path')
+    parser.add_argument('--data_path', '-p', type=str, required=True, help='data path')
     parser.add_argument('--model', '-m', type=str, default='yolo26s_model/yolo26s.pt', help='Original model')
     parser.add_argument('--resume', '-r', action='store_true', help='resume training')
 
