@@ -4,7 +4,7 @@ import argparse
 from ultralytics import YOLO
 
 def get_args():
-    parser = argparse.ArgumentParser(description='model arguments')
+    parser = argparse.ArgumentParser(description='detection model arguments')
 
     parser.add_argument('--epochs', '-e', type=int, default=200, help='number of epochs')
     parser.add_argument('--batch_size', '-b', type=int, default=32, help='batch size')
