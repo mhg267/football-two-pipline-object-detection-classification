@@ -8,11 +8,12 @@ def get_args():
 
     parser.add_argument('--epochs', '-e', type=int, default=200, help='number of epochs')
     parser.add_argument('--batch_size', '-b', type=int, default=32, help='batch size')
-    parser.add_argument('--num_workers', '-w', type=int, default=4, help='number of workers')
+    parser.add_argument('--num_workers', '-w', type=int, default=8, help='number of workers')
     parser.add_argument('--img_sz', '-s', type=int, default=3840, help='image size')
-    parser.add_argument('--lr', '-l', type=float, default=5e-4, help='learning rate')
+    parser.add_argument('--lr', '-l', type=float, default=1e-3, help='learning rate')
     parser.add_argument('--optimizer', '-o', type=str, default='AdamW', help='Optimizer of model')
-    parser.add_argument('--name_folder', '-n', type=str, default='yolo26s_lr0005_opAdamW', help='name of model folder name with arguments')
+    parser.add_argument('--weight_decay', '-wd', type=float, default=1e-5, help='weight decay')
+    parser.add_argument('--name_folder', '-n', type=str, default='yolo26s_lr1e-3_opAdamW', help='name of model folder name with arguments')
     parser.add_argument('--data_path', '-p', type=str, default='/Computer Vision/Data/Dataset/Football/football_data.yaml', help='data path')
     parser.add_argument('--model', '-m', type=str, default='yolo26s_model/yolo26s.pt', help='Original model')
     parser.add_argument('--resume', '-r', action='store_true', help='resume training')
@@ -41,6 +42,8 @@ def main():
         exist_ok=True,
         optimizer=args.optimizer,
         lr0=args.lr,
+        cos_lr=True,
+        weight_decay=args.weight_decay,
         patience=20,
         workers=args.num_workers,
         seed=42,
