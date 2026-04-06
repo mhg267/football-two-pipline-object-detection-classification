@@ -38,8 +38,8 @@ class player_classifier(nn.Module):
         x = self.backbone.avgpool(x)
         x = torch.flatten(x, 1)
 
-        x1 = self.backbone.color_head(x)
-        x2 = self.backbone.number_head(x)
+        x1 = self.backbone.number_head(x)
+        x2 = self.backbone.color_head(x)
 
         return x1, x2
 

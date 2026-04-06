@@ -11,6 +11,7 @@ from torchvision.transforms import transforms
 class ClassificationDataset(Dataset):
     def __init__(self, path, mode="train", transform=None):
         self.path = path
+        self.transform = transform
 
         if mode == "train":
             self.path = os.path.join(path, f"football_{mode}")
@@ -21,7 +22,7 @@ class ClassificationDataset(Dataset):
         else:
             raise ValueError("mode must be train or val or test")
 
-        self.match_files = os.listdir(self.path)
+        self.match_files = sorted(os.listdir(self.path))
 
         self.start_idx = 0
         self.end_idx = 0
@@ -42,6 +43,11 @@ class ClassificationDataset(Dataset):
                 self.end_idx += len(json_data["images"])
                 self.image_idx[folder] = [self.start_idx, self.end_idx-1]
                 self.start_idx = self.end_idx
+
+            self.color_map = {
+                'white': 0,
+                'black': 1
+            }
 
 
 
@@ -81,10 +87,42 @@ class ClassificationDataset(Dataset):
         bbox = [annotation["bbox"] for annotation in annotations]
         cropped_image = [image[int(ymin):int(ymin+h), int(xmin):int(xmin+w)] for [xmin, ymin, w, h] in bbox]
         jersey_num = [int(annotation["attributes"]["jersey_number"]) for annotation in annotations]
-        jersey_color = [annotation["attributes"]["team_jersey_color"] for annotation in annotations]
+        jersey_color = [self.color_map[annotation["attributes"]["team_jersey_color"]] for annotation in annotations]
+
+
+        if self.transform:
+            cropped_image = [self.transform(image) for image in cropped_image]
 
         return cropped_image, jersey_num, jersey_color
 
 
 
+
+
+if __name__ == '__main__':
+    path = "/Users/minhhung/Documents/Code/Python/Computer Vision/Data/Dataset/Football"
+    dataset = ClassificationDataset(path, mode="train")
+    cropped_image, jersey_num, jersey_color = dataset.__getitem__(1000)
+    print(jersey_num)
+    print(jersey_color)
+
+    # for image, num, color in zip(cropped_image, jersey_num, jersey_color):
+    #     # image đang là numpy RGB
+    #     pil_image = transforms.ToPILImage()(image)
+    #
+    #     transformed_image = transforms.Compose([
+    #         transforms.Resize((384, 384))
+    #
+    #     ])(pil_image)
+    #
+    #     # PIL -> numpy để show bằng cv2
+    #     transformed_np = np.array(transformed_image)
+    #
+    #     # RGB -> BGR để cv2 hiển thị đúng màu
+    #     transformed_np = cv2.cvtColor(transformed_np, cv2.COLOR_RGB2BGR)
+    #
+    #     cv2.imshow(f"{num}_{color}", transformed_np)
+    #     cv2.waitKey(0)
+    #
+    # cv2.destroyAllWindows()
 

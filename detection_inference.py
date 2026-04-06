@@ -9,9 +9,9 @@ def get_args():
 
     parser.add_argument('--video_path', '-p', type=str, required=True, help='video path')
     parser.add_argument('--best_model', '-m', type=str, required=True, help='model path')
-    parser.add_argument('--conf', type=float, default=0.5, help='confidence threshold')
+    parser.add_argument('--conf', type=float, default=0.25, help='confidence threshold')
     parser.add_argument('--batch_size', '-b', type=int, default=1, help='batch size')
-    parser.add_argument('--img_size', '-imsz', type=int, default=640, help='image size')
+    parser.add_argument('--img_size', '-imsz', type=int, default=1280, help='image size')
     parser.add_argument('--output_path', type=str, default="output_result.mp4", help='output directory')
 
 
