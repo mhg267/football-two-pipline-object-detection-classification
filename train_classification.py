@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, classification_report
+from collections import Counter
 
 
 class EarlyStopping:
@@ -168,9 +169,30 @@ if __name__ == '__main__':
     if not os.path.exists(args.trained_dir):
         os.makedirs(args.trained_dir)
 
+    ## Create weight to reduce overfiting ##
+    counter = Counter()
+
+    for i in range(len(train_dataset)):
+        _, nums, _ = train_dataset[i]
+        counter.update(nums)
+
+    num_classes = 21
+    total = sum(counter.values())
+
+    weight = [0.0 if counter.get(i,0) == 0 else (total / num_classes) / counter[i]
+              for i in range(num_classes)]
+
+    # Reduce importance of class 0: unknown
+    weight[0] *= 0.3
+
+    # Change to tensor
+    weight = torch.tensor(weight, dtype=torch.float)
+    ########################################
+
     # Initialize model, optimizer, loss, scheduler
     model = player_classifier().to(device)
-    criterion = nn.CrossEntropyLoss()
+    criterion_n = nn.CrossEntropyLoss(weight=weight.to(device))
+    criterion_c = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", patience=3, factor=0.5)
 
@@ -233,9 +255,9 @@ if __name__ == '__main__':
             train_jersey_c_outputs.extend(jersey_c_pred.cpu().tolist())
 
             # Loss
-            jersey_n_loss = criterion(jersey_n_output, jersey_numbers)
-            jersey_c_loss = criterion(jersey_c_output, jersey_colors)
-            train_total_loss = jersey_n_loss + jersey_c_loss
+            jersey_n_loss = criterion_n(jersey_n_output, jersey_numbers)
+            jersey_c_loss = criterion_c(jersey_c_output, jersey_colors)
+            train_total_loss = jersey_n_loss + 0.2 * jersey_c_loss
 
             train_loss_sum += train_total_loss.item() * jersey_numbers.size(0)
             train_sample_sum += jersey_numbers.size(0)
@@ -301,9 +323,9 @@ if __name__ == '__main__':
                 val_jersey_c_outputs.extend(jersey_c_pred.cpu().tolist())
 
                 # Validation loss
-                jersey_n_loss = criterion(jersey_n_output, jersey_numbers)
-                jersey_c_loss = criterion(jersey_c_output, jersey_colors)
-                val_total_loss = jersey_n_loss + jersey_c_loss
+                jersey_n_loss = criterion_n(jersey_n_output, jersey_numbers)
+                jersey_c_loss = criterion_c(jersey_c_output, jersey_colors)
+                val_total_loss = jersey_n_loss + 0.2 *jersey_c_loss
 
                 val_loss_sum += val_total_loss.item() * jersey_numbers.size(0)
                 val_sample_sum += jersey_numbers.size(0)
