@@ -1,9 +1,9 @@
 import argparse
 import shutil
-
 import torch.nn as nn
 import torch
 import os
+import json
 
 from src.classification.efficientnetv2_custom import player_classifier
 from src.classification.classification_dataset import ClassificationDataset
@@ -171,27 +171,42 @@ if __name__ == '__main__':
 
     ## Create weight to reduce overfiting ##
     counter = Counter()
+    train_root = os.path.join(args.data_path, "football_train")
 
-    for i in range(len(train_dataset)):
-        _, nums, _ = train_dataset[i]
-        counter.update(nums)
+    for folder in sorted(os.listdir(train_root)):
+        if folder in ['.DS_Store', 'images', 'labels']:
+            continue
+
+        json_file = os.path.join(train_root, folder, f"{folder}.json")
+        with open(json_file, "r") as f:
+            annotations = json.load(f)["annotations"]
+
+        for ann in annotations:
+            if ann["category_id"] != 4:
+                continue
+
+            if ann["attributes"]["number_visible"] == "visible":
+                num = int(ann["attributes"]["jersey_number"])
+            else:
+                num = 0
+
+            counter.update([num])
 
     num_classes = 21
     total = sum(counter.values())
 
-    weight = [0.0 if counter.get(i,0) == 0 else (total / num_classes) / counter[i]
-              for i in range(num_classes)]
+    weight = [
+        0.0 if counter.get(i, 0) == 0 else (total / num_classes) / counter[i]
+        for i in range(num_classes)
+    ]
 
-    # Reduce importance of class 0: unknown
     weight[0] *= 0.3
-
-    # Change to tensor
-    weight = torch.tensor(weight, dtype=torch.float)
+    weight = torch.tensor(weight, dtype=torch.float, device=device)
     ########################################
 
     # Initialize model, optimizer, loss, scheduler
     model = player_classifier().to(device)
-    criterion_n = nn.CrossEntropyLoss(weight=weight.to(device))
+    criterion_n = nn.CrossEntropyLoss(weight=weight)
     criterion_c = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", patience=3, factor=0.5)
