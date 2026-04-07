@@ -55,9 +55,9 @@ def get_args():
     parser = argparse.ArgumentParser('classification model arguments')
 
     parser.add_argument('--data_path', '-p', type=str, required=True, help='path to dataset')
-    parser.add_argument('--num_workers', '-nw', type=int, default=32, help='number of workers')
+    parser.add_argument('--num_workers', '-nw', type=int, default=12, help='number of workers')
     parser.add_argument('--epochs', '-e', type=int, default=200, help='number of epochs')
-    parser.add_argument('--batch_size', '-b', type=int, default=8, help='batch size')
+    parser.add_argument('--batch_size', '-b', type=int, default=16, help='batch size')
     parser.add_argument('--learning_rate', '-lr', type=float, default=1e-4, help='learning rate')
     parser.add_argument('--weight_decay', '-wd', type=float, default=1e-5, help='weight decay')
     parser.add_argument('--trained_dir', '-trd', type=str, default='efficientnetv2s_trained', help='trained folder')
@@ -101,7 +101,7 @@ if __name__ == '__main__':
     # Data transform and augmentation
     train_transforms = Compose([
         ToPILImage(),
-        Resize((384, 384)),
+        Resize((224, 224)),
         ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.01),
         RandomAffine(degrees=(-10, 10),
                                 translate=(0.1, 0.1),
@@ -144,7 +144,10 @@ if __name__ == '__main__':
         shuffle=True,
         num_workers=args.num_workers,
         drop_last=True,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2
     )
 
     val_loader = DataLoader(
@@ -153,7 +156,10 @@ if __name__ == '__main__':
         shuffle=False,
         num_workers=args.num_workers,
         drop_last=False,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2
     )
 
     if not os.path.exists(args.trained_dir):
@@ -221,7 +227,7 @@ if __name__ == '__main__':
             # Loss
             jersey_n_loss = criterion(jersey_n_output, jersey_numbers)
             jersey_c_loss = criterion(jersey_c_output, jersey_colors)
-            train_total_loss = jersey_n_loss + jersey_c_loss
+            train_total_loss = 3.0 * jersey_n_loss + 0.3 *jersey_c_loss
 
             train_loss_sum += train_total_loss.item() * jersey_numbers.size(0)
             train_sample_sum += jersey_numbers.size(0)
@@ -239,6 +245,7 @@ if __name__ == '__main__':
             train_step = epoch * train_iter_size + iter
 
             train_progress_bar.set_description(
+                f"Traning ||"
                 f"Epoch {epoch + 1}/{args.epochs} || "
                 f"Iter {iter + 1}/{train_iter_size} || "
                 f"Loss: {train_total_loss.item():.4f} || "
@@ -246,15 +253,15 @@ if __name__ == '__main__':
                 f"Jersey_c acc: {train_jersey_c_acc:.4f}"
             )
 
-            tensorboard_writer.add_scalar("train_iter/loss", train_total_loss.item(), train_step)
-            tensorboard_writer.add_scalar("train_iter/jersey_n_acc", train_jersey_n_acc, train_step)
-            tensorboard_writer.add_scalar("train_iter/jersey_c_acc", train_jersey_c_acc, train_step)
+            tensorboard_writer.add_scalar("loss/train_iter", train_total_loss.item(), train_step)
+            tensorboard_writer.add_scalar("jersey_n_acc/train_iter", train_jersey_n_acc, train_step)
+            tensorboard_writer.add_scalar("jersey_c_acc/train_iter", train_jersey_c_acc, train_step)
 
         avg_train_loss = train_loss_sum / train_sample_sum
 
-        tensorboard_writer.add_scalar("train_epoch/loss", avg_train_loss, epoch + 1)
-        tensorboard_writer.add_scalar("train_epoch/jersey_n_acc", train_jersey_n_acc, epoch + 1)
-        tensorboard_writer.add_scalar("train_epoch/jersey_c_acc", train_jersey_c_acc, epoch + 1)
+        tensorboard_writer.add_scalar("loss/train_epoch", avg_train_loss, epoch + 1)
+        tensorboard_writer.add_scalar("jersey_n_acc/train_epoch", train_jersey_n_acc, epoch + 1)
+        tensorboard_writer.add_scalar("jersey_c_acc/train_epoch", train_jersey_c_acc, epoch + 1)
 
 
         ### VALIDATION
@@ -300,20 +307,21 @@ if __name__ == '__main__':
                 val_step = epoch * val_iter_size + iter
 
                 val_progress_bar.set_description(
+                    f"Validation ||"
                     f"Loss: {val_total_loss.item():.4f} || "
                     f"Jersey_n acc: {val_jersey_n_acc:.4f} || "
                     f"Jersey_c acc: {val_jersey_c_acc:.4f}"
                 )
 
-                tensorboard_writer.add_scalar("val_iter/loss", val_total_loss.item(), val_step)
-                tensorboard_writer.add_scalar("val_iter/jersey_n_acc", val_jersey_n_acc, val_step)
-                tensorboard_writer.add_scalar("val_iter/jersey_c_acc", val_jersey_c_acc, val_step)
+                tensorboard_writer.add_scalar("loss/val_iter", val_total_loss.item(), val_step)
+                tensorboard_writer.add_scalar("jersey_n_acc/val_iter", val_jersey_n_acc, val_step)
+                tensorboard_writer.add_scalar("jersey_c_acc/val_iter", val_jersey_c_acc, val_step)
 
         avg_val_loss = val_loss_sum / val_sample_sum
 
-        tensorboard_writer.add_scalar("val_epoch/loss", avg_val_loss, epoch + 1)
-        tensorboard_writer.add_scalar("val_epoch/jersey_n_acc", val_jersey_n_acc, epoch + 1)
-        tensorboard_writer.add_scalar("val_epoch/jersey_c_acc", val_jersey_c_acc, epoch + 1)
+        tensorboard_writer.add_scalar("loss/val_epoch", avg_val_loss, epoch + 1)
+        tensorboard_writer.add_scalar("jersey_n_acc/val_epoch", val_jersey_n_acc, epoch + 1)
+        tensorboard_writer.add_scalar("jersey_c_acc/val_epoch", val_jersey_c_acc, epoch + 1)
 
         # scheduler step
         scheduler.step(avg_val_loss)

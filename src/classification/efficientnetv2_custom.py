@@ -23,7 +23,7 @@ class player_classifier(nn.Module):
 
         # Initialize new FC layers
         self.backbone.number_head = nn.Sequential(
-            nn.Dropout(p=0.2),
+            nn.Dropout(p=0.5),
             nn.Linear(in_features, n_jersey_numbers)
         )
 
