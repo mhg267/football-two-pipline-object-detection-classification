@@ -18,7 +18,7 @@ class player_classifier(nn.Module):
 
         in_features = self.backbone.classifier[1].in_features
 
-        # Change model architecture
+        # Delete old classification layer
         del self.backbone.classifier
 
         # Initialize new FC layers
