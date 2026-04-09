@@ -8,7 +8,7 @@ import json
 from src.classification.efficientnetv2_custom import player_classifier
 from src.classification.classification_dataset import ClassificationDataset
 
-from torchvision.transforms import Resize, ToTensor, ToPILImage, Normalize, Compose, ColorJitter, RandomAffine, InterpolationMode, GaussianBlur, RandomErasing
+from torchvision.transforms import Resize, ToTensor, ToPILImage, Normalize, Compose, ColorJitter, RandomAffine, InterpolationMode
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -19,7 +19,7 @@ from collections import Counter
 
 
 class EarlyStopping:
-    def __init__(self, patience=5, min_delta=1e-3):
+    def __init__(self, patience=15, min_delta=1e-3):
         self.patience = patience
         self.min_delta = min_delta
         self.best_loss = None
@@ -106,7 +106,7 @@ if __name__ == '__main__':
         device = torch.device("cpu")
 
     # Initialize early stopping and tensorboard writer
-    early_stopping = EarlyStopping(patience=5, min_delta=1e-3)
+    early_stopping = EarlyStopping(patience=7, min_delta=1e-3)
 
     if args.checkpoint is None:
         if os.path.exists(args.tensorboard_dir):
@@ -214,7 +214,7 @@ if __name__ == '__main__':
         0.0 if counter.get(i, 0) == 0 else ((total / num_classes) / counter[i]) ** 0.7
         for i in range(num_classes)
     ]
-    weight[0] *= 0.9
+    weight[0] *= 0.85
 
     weight = torch.tensor(weight, dtype=torch.float, device=device)
     ########################################
@@ -224,7 +224,11 @@ if __name__ == '__main__':
     criterion_n = nn.CrossEntropyLoss(weight=weight, label_smoothing=0.02)
     criterion_c = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", patience=3, factor=0.5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=20,
+        eta_min=1e-6
+    )
 
     # Check checkpoint, we need load checkpoint before DataParallel
     if args.checkpoint is None:
@@ -387,7 +391,7 @@ if __name__ == '__main__':
         tensorboard_writer.add_scalar("jersey_c_acc/val_epoch", val_jersey_c_acc, epoch + 1)
 
         # scheduler step
-        scheduler.step(avg_val_loss)
+        scheduler.step()
         current_lr = optimizer.param_groups[0]['lr']
 
         print(f"Current LR: {current_lr:.6f}")
