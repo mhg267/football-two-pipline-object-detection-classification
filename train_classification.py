@@ -211,7 +211,7 @@ if __name__ == '__main__':
     total = sum(counter.values())
 
     weight = [
-        0.0 if counter.get(i, 0) == 0 else ((total / num_classes) / counter[i]) ** 0.8
+        0.0 if counter.get(i, 0) == 0 else ((total / num_classes) / counter[i]) ** 0.75
         for i in range(num_classes)
     ]
     weight[0] *= 0.80
@@ -221,7 +221,7 @@ if __name__ == '__main__':
 
     # Initialize model, optimizer, loss, scheduler
     model = player_classifier().to(device)
-    criterion_n = nn.CrossEntropyLoss(weight=weight, label_smoothing=0.01)
+    criterion_n = nn.CrossEntropyLoss(weight=weight, label_smoothing=0.015)
     criterion_c = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -233,7 +233,7 @@ if __name__ == '__main__':
     # Check checkpoint, we need load checkpoint before DataParallel
     if args.checkpoint is None:
         epoch_start = 0
-        best_loss = float("inf")
+        best_acc = 0
         if os.path.exists(f"{args.trained_dir}/last.pt"):
             os.remove(f"{args.trained_dir}/last.pt")
         if os.path.exists(f"{args.trained_dir}/best.pt"):
@@ -396,8 +396,8 @@ if __name__ == '__main__':
 
         print(f"Current LR: {current_lr:.6f}")
 
-        if best_loss > avg_val_loss:
-            best_loss = avg_val_loss
+        if best_acc < val_jersey_n_acc:
+            best_acc = val_jersey_n_acc
 
             # Save best.pt
             checkpoint = {
@@ -405,7 +405,7 @@ if __name__ == '__main__':
                 'model': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
-                'best_loss': best_loss
+                'best_acc': best_acc
             }
 
             torch.save(checkpoint, f"{args.trained_dir}/best.pt")
@@ -415,8 +415,7 @@ if __name__ == '__main__':
             'epoch': epoch + 1,
             'model': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
-            'best_loss': best_loss
+            'scheduler': scheduler.state_dict()
         }
 
         torch.save(checkpoint, f"{args.trained_dir}/last.pt")
