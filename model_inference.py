@@ -5,7 +5,8 @@ import argparse
 from src.classification.efficientnetv2_custom import player_classifier
 from src.classification.classification_dataset import ClassificationDataset
 
-from torchvision.transforms import ToTensor, Normalize, Compose, Resize, ToPILImage
+from torchvision.transforms import ToTensor, Normalize, Compose, Resize, ToPILImage, transforms
+from ultralytics import YOLO
 
 
 
@@ -15,6 +16,7 @@ def parse_args():
     parser.add_argument('--detection_model', '-dm', type=str, required=True, help='Path to the trained object detection model')
     parser.add_argument('--classification_model', '-cm', type=str, required=True, help='Path to the trained classification model')
     parser.add_argument('--test_video', '-p', type=str, required=True, help='Path to the test video')
+    parser.add_argument('--output_video', type=str, default="result_video.mp4", help='Path to the output video')
     parser.add_argument('--batch_size', '-b', type=int, default=1, help='Batch size')
     parser.add_argument('--img_size', '-imsz', type=int, default=1280, help='Image size')
     parser.add_argument('--conf_threshold', '-conf', type=float, default=0.3, help='Confidence threshold')
@@ -38,72 +40,162 @@ def object_detector():
                            )
 
     for r in result:
+        boxes = r.boxes
+        detections = []
+
+        for bbox in boxes:
+            x1, y1, x2, y2 = map(int, bbox.xyxy[0])
+            cls = int(bbox.cls[0])
+            conf = float(bbox.conf[0])
+
+            detections.append({
+                'bbox' : [x1, y1, x2, y2],
+                'cls': cls,
+                'conf': conf
+            })
+        yield r.orig_img, detections
+
+def crop_frame(frame, box):
+    x1, y1, x2, y2 = box
+
+    w, h = x2 - x1, y2 - y1
+
+    x1_crop = int(x1)
+    x2_crop = int(x2)
+    y1_crop = int(y1 + 0.1 * h)
+    y2_crop = int(y2 - 0.45 * h)
+
+    cropped_frame = frame[y1_crop:y2_crop, x1_crop:x2_crop]
+
+    return cropped_frame
 
 
-def classifier():
 
-    "cuda" if torch.cuda.is_available() else "cpu"
+def object_classifier():
 
-    jersey_team = {
-        0: "team A",
-        1: "team B"
-    }
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    jersey_number = {
-        0: "Unknown",
-        1: "Jersey number 1",
-        2: "Jersey number 2",
-        3: "Jersey number 3",
-        4: "Jersey number 4",
-        5: "Jersey number 5",
-        6: "Jersey number 6",
-        7: "Jersey number 7",
-        8: "Jersey number 8",
-        9: "Jersey number 9",
-        10: "Jersey number 10",
-        11: "Jersey number 11",
-        12: "Jersey number 12",
-        13: "Jersey number 13",
-        14: "Jersey number 14",
-        15: "Jersey number 15",
-        16: "Jersey number 16",
-        17: "Jersey number 17",
-        18: "Jersey number 18",
-        19: "Jersey number 19",
-        20: "Jersey number 20"
-    }
+    jersey_team = {0: "team A_white", 1: "team B_black"}
+    jersey_number = {i: f"Jersey number {i+1}" for i in range(20)}
+    jersey_visible_map= {0: "invisible", 1: "visible"}
 
-    # Load model
     model = player_classifier().to(device)
-    trained_model = torch.load(args.classification_model)
-    model.load_state_dict(trained_model)
+    trained_model = torch.load(args.classification_model, map_location=device)
+    model.load_state_dict(trained_model['model'])
+    model.eval()
 
-    cap = cv2.VideoCapture(args.test_video)
-    cap.release()
+    transform = transforms.Compose([
+        ToPILImage(),
+        Resize((224, 224)),
+        ToTensor(),
+        Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        )
+    ])
 
-    while(cap.isOpened()):
-        ret, frame = cap.read()
-        if not ret:
-            break
+    for frame, detections in object_detector():
+        all_images = []
+        player_detections = []
+        results = []
 
-        model.eval()
+        for detection in detections:
 
+            # Ball
+            if detection['cls'] == 1:
+                results.append({
+                    'bbox': detection['bbox'],
+                    'cls': detection['cls'],
+                    'conf': detection['conf']
+                })
+                continue
 
+            # Player
+            crop = crop_frame(frame, detection['bbox'])
+            crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            crop = transform(crop)
 
+            all_images.append(crop)
+            player_detections.append(detection)
 
+        if len(all_images) > 0:
+            all_images = torch.stack(all_images).to(device)
 
+            with torch.no_grad():
+                visible, jersey_n_pred, jersey_c_pred = model(all_images)
 
+                jersey_n = torch.argmax(jersey_n_pred, dim=1)
+                jersey_c = torch.argmax(jersey_c_pred, dim=1)
+                jersey_visible = torch.argmax(visible, dim=1)
 
+            for det, n, c, vis in zip(player_detections, jersey_n, jersey_c, jersey_visible):
+                n = n.item()
+                c = c.item()
+                vis = vis.item()
 
+                results.append({
+                    'bbox': det['bbox'],
+                    'cls': det['cls'],
+                    'conf': det['conf'],
+                    'jersey_n_id': n if vis == 1 else None,
+                    'jersey_c_id': c,
+                    'jersey_visible_id': vis,
+                    'jersey_number': jersey_number.get(n, str(n)) if vis == 1 else "Unknown",
+                    'jersey_team': jersey_team.get(c, str(c)),
+                    'status': jersey_visible_map.get(vis, str(vis))
+                })
 
-
-
-
-
-
+        yield frame, results
 
 
 
 
 if __name__ == '__main__':
     args = parse_args()
+
+    cap = cv2.VideoCapture(args.test_video)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(args.output_video, fourcc, fps, (width, height))
+
+    for frame, results in object_classifier():
+        for result in results:
+            x1, y1, x2, y2 = result['bbox']
+
+            if result['cls'] == 0:
+                team = result['jersey_team']
+                number = result['jersey_number']
+                status = result['status']
+
+                if result['jersey_c_id'] == 0:
+                    color = (255, 255, 255)
+                else:
+                    color = (0, 0, 0)
+
+                if result['jersey_visible_id'] == 1:
+                    label = f"{team}-{number}-{result['conf']:.2}-status: {status}"
+                else:
+                    label = f"{team}-{result['conf']}-status: invisible"
+
+            else:
+                color = (0, 255, 255)
+                label = f"Ball-{result['conf']:.2}"
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+            cv2.putText(frame, label, (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+        out.write(frame)
+
+    out.release()
+    print(f"Saved output video to: {args.output_video}")
+
+
+
+
+

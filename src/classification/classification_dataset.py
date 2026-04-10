@@ -86,10 +86,13 @@ class ClassificationDataset(Dataset):
         annotations = all_image_id[idx+1]
         bbox = [annotation["bbox"] for annotation in annotations]
         cropped_image = [image[int(ymin):int(ymin+h), int(xmin):int(xmin+w)] for [xmin, ymin, w, h] in bbox]
+        jersey_visible = [
+            1 if annotation["attributes"]["number_visible"] == "visible" else 0
+            for annotation in annotations
+        ]
         jersey_num = [
-            int(annotation["attributes"]["jersey_number"])
-            if annotation["attributes"]["number_visible"] in ["visible"]
-            else 0
+            int(annotation["attributes"]["jersey_number"]) - 1
+            if annotation["attributes"]["number_visible"] == "visible" else 0
             for annotation in annotations if annotation
         ]
 
@@ -98,7 +101,7 @@ class ClassificationDataset(Dataset):
         if self.transform:
             cropped_image = [self.transform(image) for image in cropped_image]
 
-        return cropped_image, jersey_num, jersey_color
+        return cropped_image, jersey_num, jersey_color, jersey_visible
 
 
 
@@ -107,11 +110,26 @@ class ClassificationDataset(Dataset):
 if __name__ == '__main__':
     path = "/Users/minhhung/Documents/Code/Python/Computer Vision/Data/Dataset/Football"
     dataset = ClassificationDataset(path, mode="train")
-    cropped_image, jersey_num, jersey_color = dataset.__getitem__(200)
+    cropped_image, jersey_num, jersey_color, visible = dataset.__getitem__(200)
     print(jersey_num)
     print(jersey_color)
+    print(visible)
 
-    for image, num, color in zip(cropped_image, jersey_num, jersey_color):
+    visible_map = {
+        0: "invisible",
+        1: "visible",
+    }
+
+    color_map_inv = {
+        0: "white",
+        1: "black",
+    }
+
+
+
+    jersey_num_map = {i: f"jersey_number_{i+1}" for i in range(20)}
+
+    for image, num, color, v in zip(cropped_image, jersey_num, jersey_color, visible):
 
 
         transformed_image = transforms.Compose([
@@ -134,11 +152,12 @@ if __name__ == '__main__':
 
         ])(pil_image)
 
+
         transformed_np = np.array(transformed_image)
 
         transformed_np = cv2.cvtColor(transformed_np, cv2.COLOR_RGB2BGR)
 
-        cv2.imshow(f"{num}_{color}", transformed_np)
+        cv2.imshow(f"{jersey_num_map.get(num, str(num))}_{color_map_inv.get(color, str(color))}_{visible_map.get(v, str(v))}", transformed_np)
         cv2.waitKey(0)
 
     cv2.destroyAllWindows()

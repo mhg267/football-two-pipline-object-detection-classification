@@ -41,20 +41,20 @@ class EarlyStopping:
 
 
 def collate_fn(batch):
-    images, jersey_nums, jersey_colors = [], [], []
-
-    for imgs, nums, colors in batch:
+    images, jersey_nums, jersey_colors, jersey_visibles = [], [], [], []
+    for imgs, nums, colors, visibles in batch:
         images.extend(imgs)
         jersey_nums.extend(nums)
         jersey_colors.extend(colors)
+        jersey_visibles.extend(visibles)
 
     images = torch.stack(images, dim=0)
     jersey_nums = torch.tensor(jersey_nums, dtype=torch.long)
     jersey_colors = torch.tensor(jersey_colors, dtype=torch.long)
+    jersey_visibles = torch.tensor(jersey_visibles, dtype=torch.long)
+    return images, jersey_nums, jersey_colors, jersey_visibles
 
-    return images, jersey_nums, jersey_colors
-
-def plot_confusion_matrix(y_true, y_pred, num_classes=21):
+def plot_confusion_matrix(y_true, y_pred, num_classes=20):
     cm = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
     cm = cm.astype("float") / (cm.sum(axis=1, keepdims=True) + 1e-6)
 
@@ -74,8 +74,8 @@ def get_args():
     parser.add_argument('--num_workers', '-nw', type=int, default=8, help='number of workers')
     parser.add_argument('--epochs', '-e', type=int, default=200, help='number of epochs')
     parser.add_argument('--batch_size', '-b', type=int, default=16, help='batch size')
-    parser.add_argument('--learning_rate', '-lr', type=float, default=5e-5, help='learning rate')
-    parser.add_argument('--weight_decay', '-wd', type=float, default=3e-4, help='weight decay')
+    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-4, help='learning rate')
+    parser.add_argument('--weight_decay', '-wd', type=float, default=1e-3, help='weight decay')
     parser.add_argument('--trained_dir', '-trd', type=str, default='efficientnetv2s_trained', help='trained folder')
     parser.add_argument('--checkpoint', '-cp', type=str, default=None, help='checkpoint path')
     parser.add_argument('--tensorboard_dir', '-td', type=str, default='tensorboard', help='tensorboard folder')
@@ -122,9 +122,9 @@ if __name__ == '__main__':
         ToPILImage(),
         Resize((224, 224)),
         ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0.01),
-        RandomAffine(degrees=5,
-                                translate=(0.05, 0.05),
-                                scale=(0.9, 1.1),
+        RandomAffine(degrees=10,
+                                translate=(0.1, 0.1),
+                                scale=(0.85, 1.15),
                                 shear=5,
                                 interpolation=InterpolationMode.BILINEAR),
         ToTensor(),
@@ -181,10 +181,7 @@ if __name__ == '__main__':
         prefetch_factor=2
     )
 
-    if not os.path.exists(args.trained_dir):
-        os.makedirs(args.trained_dir)
-
-    ## Create weight to reduce overfiting ##
+    ### Counter weight for visible ###
     counter = Counter()
     train_root = os.path.join(args.data_path, "football_train")
 
@@ -192,46 +189,40 @@ if __name__ == '__main__':
         if folder in ['.DS_Store', 'images', 'labels']:
             continue
 
-        json_file = os.path.join(train_root, folder, f"{folder}.json")
-        with open(json_file, "r") as f:
-            annotations = json.load(f)["annotations"]
+        folder_path = os.path.join(train_root, folder)
+        json_path = os.path.join(folder_path, folder + ".json")
+
+        with open(json_path, "r") as f:
+            annotations = json.load(f)['annotations']
 
         for ann in annotations:
-            if ann["category_id"] != 4:
+            if ann['category_id'] != 4:
                 continue
+            vis = 1 if ann["attributes"]["number_visible"] == "visible" else 0
+            counter.update([vis])
 
-            if ann["attributes"]["number_visible"] == "visible":
-                num = int(ann["attributes"]["jersey_number"])
-            else:
-                num = 0
+    total_visible = sum(counter.values())
+    visible_weight = torch.tensor([((total_visible / 2) / counter[i]) for i in range(2)], dtype=torch.float, device=device)
+    visible_weight = visible_weight / visible_weight.mean()
+    ###################################
 
-            counter.update([num])
-
-    num_classes = 21
-    total = sum(counter.values())
-
-    weight = [
-        0.0 if counter.get(i, 0) == 0 else ((total / num_classes) / counter[i]) ** 0.8
-        for i in range(num_classes)
-    ]
-    weight[0] *= 0.75
-    weight[4] *=1.5
-    weight[11] *=1.5
-    weight[10] *=1.2
-    weight[12] *= 1.5
-    weight[13] *=1.5
-
-    weight = torch.tensor(weight, dtype=torch.float, device=device)
-    ########################################
+    if not os.path.exists(args.trained_dir):
+        os.makedirs(args.trained_dir)
 
     # Initialize model, optimizer, loss, scheduler
     model = player_classifier().to(device)
-    criterion_n = nn.CrossEntropyLoss(weight=weight, label_smoothing=0.015)
+    criterion_n = nn.CrossEntropyLoss()
     criterion_c = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    criterion_visible = nn.CrossEntropyLoss(weight=visible_weight)
+    optimizer = torch.optim.AdamW([
+        {'params': model.backbone.features.parameters(), 'lr': 1e-5},
+        {'params': model.backbone.number_head.parameters(), 'lr': 1e-4},
+        {'params': model.backbone.color_head.parameters(), 'lr': 1e-4},
+        {'params': model.backbone.visible_head.parameters(), 'lr': 1e-4},
+    ], weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=20,
+        T_max=args.epochs,
         eta_min=1e-6
     )
 
@@ -247,7 +238,7 @@ if __name__ == '__main__':
     else:
         checkpoint = torch.load(args.checkpoint, map_location=device)
         epoch_start = checkpoint["epoch"]
-        best_loss = checkpoint["best_loss"]
+        best_acc = checkpoint["best_acc"]
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
@@ -271,32 +262,50 @@ if __name__ == '__main__':
 
         train_jersey_n_outputs, train_jersey_n_labels = [], []
         train_jersey_c_outputs, train_jersey_c_labels = [], []
+        train_visible_n_outputs, train_visible_n_labels = [], []
         train_loss_sum = 0.0
         train_sample_sum = 0
 
         train_progress_bar = tqdm(train_loader, colour="red", desc="Training")
 
-        for iter, (images, jersey_numbers, jersey_colors) in enumerate(train_progress_bar):
+        for iter, (images, jersey_numbers, jersey_colors, n_visible) in enumerate(train_progress_bar):
             images, jersey_numbers, jersey_colors = images.to(device, non_blocking=True), jersey_numbers.to(device, non_blocking=True), jersey_colors.to(device, non_blocking=True)
+            n_visible = n_visible.to(device, non_blocking=True)
 
-            train_jersey_n_labels.extend(jersey_numbers.cpu().tolist())
+            train_visible_n_labels.extend(n_visible.cpu().tolist())
             train_jersey_c_labels.extend(jersey_colors.cpu().tolist())
+
+            visible_mask = n_visible.bool()
+
+            if visible_mask.any():
+                train_jersey_n_labels.extend(jersey_numbers[visible_mask].cpu().tolist())
 
             ## Train forward
 
             # Train outputs
-            jersey_n_output, jersey_c_output = model(images)
+            visible, jersey_n_output, jersey_c_output = model(images)
 
             jersey_n_pred = torch.argmax(jersey_n_output, dim=1)
             jersey_c_pred = torch.argmax(jersey_c_output, dim=1)
+            visible_pred = torch.argmax(visible, dim=1)
 
-            train_jersey_n_outputs.extend(jersey_n_pred.cpu().tolist())
+            if visible_mask.any():
+                train_jersey_n_outputs.extend(jersey_n_pred[visible_mask].cpu().tolist())
+
             train_jersey_c_outputs.extend(jersey_c_pred.cpu().tolist())
+            train_visible_n_outputs.extend(visible_pred.cpu().tolist())
+
+            # Visible loss
+            visible_loss = criterion_visible(visible, n_visible)
 
             # Loss
-            jersey_n_loss = criterion_n(jersey_n_output, jersey_numbers)
+            if visible_mask.any():
+                jersey_n_loss = criterion_n(jersey_n_output[visible_mask], jersey_numbers[visible_mask])
+            else:
+                jersey_n_loss = torch.tensor(0.0, device=device)
+
             jersey_c_loss = criterion_c(jersey_c_output, jersey_colors)
-            train_total_loss = jersey_n_loss + 0.05 * jersey_c_loss
+            train_total_loss = jersey_n_loss + 0.05 * jersey_c_loss + visible_loss
 
             train_loss_sum += train_total_loss.item() * jersey_numbers.size(0)
             train_sample_sum += jersey_numbers.size(0)
@@ -304,6 +313,7 @@ if __name__ == '__main__':
             # Train Accuracy
             train_jersey_n_acc = accuracy_score(train_jersey_n_labels, train_jersey_n_outputs)
             train_jersey_c_acc = accuracy_score(train_jersey_c_labels, train_jersey_c_outputs)
+            train_visible_acc = accuracy_score(train_visible_n_labels, train_visible_n_outputs)
 
             # Train backward
             optimizer.zero_grad()
@@ -320,7 +330,8 @@ if __name__ == '__main__':
             train_progress_bar.set_postfix({
                 "loss": f"{train_total_loss.item():.4f}",
                 "n_acc": f"{train_jersey_n_acc:.4f}",
-                "c_acc": f"{train_jersey_c_acc:.4f}"
+                "c_acc": f"{train_jersey_c_acc:.4f}",
+                "vis_acc": f"{train_visible_acc:.4f}"
             })
 
             tensorboard_writer.add_scalar("loss/train_iter", train_total_loss.item(), train_step)
@@ -339,32 +350,50 @@ if __name__ == '__main__':
 
         val_jersey_n_outputs, val_jersey_n_labels = [], []
         val_jersey_c_outputs, val_jersey_c_labels = [], []
+        val_visible_n_outputs, val_visible_n_labels = [], []
         val_loss_sum = 0.0
         val_sample_sum = 0
 
         val_progress_bar = tqdm(val_loader, desc="Validation")
 
-        for iter, (images, jersey_numbers, jersey_colors) in enumerate(val_progress_bar):
+        for iter, (images, jersey_numbers, jersey_colors, n_visible) in enumerate(val_progress_bar):
             images, jersey_numbers, jersey_colors = images.to(device, non_blocking=True), jersey_numbers.to(device, non_blocking=True), jersey_colors.to(device, non_blocking=True)
+            n_visible = n_visible.to(device, non_blocking=True)
 
-            val_jersey_n_labels.extend(jersey_numbers.cpu().tolist())
+            val_visible_n_labels.extend(n_visible.cpu().tolist())
             val_jersey_c_labels.extend(jersey_colors.cpu().tolist())
+
+            visible_mask = n_visible.bool()
+
+            if visible_mask.any():
+                val_jersey_n_labels.extend(jersey_numbers[visible_mask].cpu().tolist())
 
             with torch.no_grad():
 
                 # Validation ouputs
-                jersey_n_output, jersey_c_output = model(images)
+                visible, jersey_n_output, jersey_c_output = model(images)
 
                 jersey_n_pred = torch.argmax(jersey_n_output, dim=1)
                 jersey_c_pred = torch.argmax(jersey_c_output, dim=1)
+                visible_pred = torch.argmax(visible, dim=1)
 
-                val_jersey_n_outputs.extend(jersey_n_pred.cpu().tolist())
+                if visible_mask.any():
+                    val_jersey_n_outputs.extend(jersey_n_pred[visible_mask].cpu().tolist())
+
                 val_jersey_c_outputs.extend(jersey_c_pred.cpu().tolist())
+                val_visible_n_outputs.extend(visible_pred.cpu().tolist())
+
+                # Visible loss
+                visible_loss = criterion_visible(visible, n_visible)
 
                 # Validation loss
-                jersey_n_loss = criterion_n(jersey_n_output, jersey_numbers)
+                if visible_mask.any():
+                    jersey_n_loss = criterion_n(jersey_n_output[visible_mask], jersey_numbers[visible_mask])
+                else:
+                    jersey_n_loss = torch.tensor(0.0, device=device)
+
                 jersey_c_loss = criterion_c(jersey_c_output, jersey_colors)
-                val_total_loss = jersey_n_loss + 0.05 *jersey_c_loss
+                val_total_loss = jersey_n_loss + 0.05 * jersey_c_loss + visible_loss
 
                 val_loss_sum += val_total_loss.item() * jersey_numbers.size(0)
                 val_sample_sum += jersey_numbers.size(0)
@@ -372,6 +401,7 @@ if __name__ == '__main__':
                 # Validation accuracy
                 val_jersey_n_acc = accuracy_score(val_jersey_n_labels, val_jersey_n_outputs)
                 val_jersey_c_acc = accuracy_score(val_jersey_c_labels, val_jersey_c_outputs)
+                val_visible_n_acc = accuracy_score(val_visible_n_labels, val_visible_n_outputs)
 
                 # Print and tensorboard writer
                 val_step = epoch * val_iter_size + iter
@@ -381,7 +411,8 @@ if __name__ == '__main__':
                 val_progress_bar.set_postfix({
                     "loss": f"{val_total_loss.item():.4f}",
                     "n_acc": f"{val_jersey_n_acc:.4f}",
-                    "c_acc": f"{val_jersey_c_acc:.4f}"
+                    "c_acc": f"{val_jersey_c_acc:.4f}",
+                    "vis_acc": f"{val_visible_n_acc:.4f}"
                 })
 
                 tensorboard_writer.add_scalar("loss/val_iter", val_total_loss.item(), val_step)
@@ -389,6 +420,8 @@ if __name__ == '__main__':
                 tensorboard_writer.add_scalar("jersey_c_acc/val_iter", val_jersey_c_acc, val_step)
 
         avg_val_loss = val_loss_sum / val_sample_sum
+
+        print("--------------------------------------------")
         print(f"Average validation loss: {avg_val_loss:.4f}")
 
         tensorboard_writer.add_scalar("loss/val_epoch", avg_val_loss, epoch + 1)
@@ -397,9 +430,12 @@ if __name__ == '__main__':
 
         # scheduler step
         scheduler.step()
-        current_lr = optimizer.param_groups[0]['lr']
-
-        print(f"Current LR: {current_lr:.6f}")
+        current_lr_head = optimizer.param_groups[1]['lr']
+        current_lr_backbone = optimizer.param_groups[0]['lr']
+        print("--------------------------------------------")
+        print(f"Current LR of 3 heads: {current_lr_head:.6f}")
+        print(f"Current LR of backbone: {current_lr_backbone:.6f}")
+        print("--------------------------------------------")
 
         if best_acc < val_jersey_n_acc:
             best_acc = val_jersey_n_acc
@@ -420,22 +456,26 @@ if __name__ == '__main__':
             'epoch': epoch + 1,
             'model': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict()
+            'scheduler': scheduler.state_dict(),
+            'best_acc': best_acc
         }
 
         torch.save(checkpoint, f"{args.trained_dir}/last.pt")
 
-
+        print("----------------------------------------------")
+        print("Classification report of visible")
+        print(classification_report(val_visible_n_labels, val_visible_n_outputs))
+        print("----------------------------------------------")
         print("Classification report of jersey_n")
-        print(classification_report(val_jersey_n_labels, val_jersey_n_outputs, zero_division=0, labels=list(range(21))))
-
+        print(classification_report(val_jersey_n_labels, val_jersey_n_outputs, zero_division=0, labels=list(range(20))))
+        print("----------------------------------------------")
         print("Classification report of jersey_c")
         print(classification_report(val_jersey_c_labels, val_jersey_c_outputs))
 
         fig = plot_confusion_matrix(
             val_jersey_n_labels,
             val_jersey_n_outputs,
-            num_classes=21
+            num_classes=20
         )
 
         tensorboard_writer.add_figure(
@@ -446,7 +486,7 @@ if __name__ == '__main__':
 
         plt.close(fig)
 
-        early_stopping(best_acc)
+        early_stopping(val_jersey_n_acc)
         if early_stopping.early_stop:
             print(f"Early stopping at epoch {epoch + 1}")
             break
