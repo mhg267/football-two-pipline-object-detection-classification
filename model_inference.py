@@ -177,9 +177,9 @@ if __name__ == '__main__':
                     color = (0, 0, 0)
 
                 if result['jersey_visible_id'] == 1:
-                    label = f"{team} | {number} | {result['conf']:.2f} | status: {status}"
+                    label = f"{number} | {result['conf']:.2f} | status: {status}"
                 else:
-                    label = f"{team} | {result['conf']:.2f} | status: invisible"
+                    label = f"{result['conf']:.2f} | status: invisible"
 
             else:
                 color = (0, 255, 255)
